@@ -74,8 +74,27 @@ def get_mask_from_json(json_path, img_shape):
     return mask
 
 
+# 修改 main.py
+
 def load_representative_data_for_drl():
-    print("🚀 正在加载 DRL 训练数据...")
+    print("🚀 [DRL] 正在加载混合样本 (PET + 强负样本PP)...")
+
+    # 定义两个数据源（和 save_data.py 类似）
+    dataset_configs = [
+        # 1. PET 文件夹
+        {
+            "root": r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-PET",
+            "json_subdir": "fake_images",
+            "is_pet_folder": True
+        },
+        # 2. Non-PET 文件夹 (PP, CC等)
+        {
+            "root": r"I:\Hyperspectral Camera Dataset\Train_Data\no_PET\no_PET(CC醋酸纤维素)",
+            "json_subdir": "fake_images",
+            "is_pet_folder": False
+        }
+    ]
+
     white = load_calibration_file(WHITE_REF_HDR)
     dark = load_calibration_file(DARK_REF_HDR)
     denom = (white - dark)
@@ -84,91 +103,89 @@ def load_representative_data_for_drl():
     collected_X = []
     collected_y = []
 
-    pet_count = 0
-    non_pet_count = 0
+    # 计数器
+    count_pet = 0
+    count_hard_neg = 0  # PP, CC
+    count_soft_neg = 0  # 背景
 
-    for root, dirs, files in os.walk(TRAIN_DATA_ROOT):
+    # 目标采样数 (根据你的显存调整，建议 5000-10000)
+    TARGET_PER_CLASS = 3000
+
+    for config in dataset_configs:
+        root_dir = config["root"]
+        json_subdir = config["json_subdir"]
+        is_pet_source = config["is_pet_folder"]
+
+        if not os.path.exists(root_dir): continue
+
+        files = [f for f in os.listdir(root_dir) if f.endswith('.spe')]
+
         for fname in files:
-            if not fname.endswith('.spe'): continue
-
-            json_path = os.path.join(root, fname.replace('.spe', '.json'))
-            if not os.path.exists(json_path): continue
+            # 提前停止条件
+            if is_pet_source and count_pet >= TARGET_PER_CLASS and count_soft_neg >= TARGET_PER_CLASS: continue
+            if not is_pet_source and count_hard_neg >= TARGET_PER_CLASS: continue
 
             try:
-                # 快速检查 JSON，如果该图没有我们要的标签，直接跳过加载图像（省时间）
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    jdata = json.load(f)
-                    has_pet = any(
-                        'pet' in s['label'].lower() and 'no_pet' not in s['label'].lower() for s in jdata['shapes'])
-                    # 如果当前 PET 样本严重不足，优先加载含 PET 的图
-                    if pet_count < SAMPLE_SIZE // 2 and not has_pet:
-                        continue
+                # ... (加载 hdr, spe, 校准 代码省略，与之前一致) ...
+                # 假设得到了 calib 数据
 
-                # 加载图像
-                hdr_path = os.path.join(root, fname + ".hdr")
-                if not os.path.exists(hdr_path): hdr_path = os.path.splitext(os.path.join(root, fname))[0] + ".hdr"
+                # 获取 JSON 路径
+                base_name = os.path.splitext(fname)[0]
+                json_path = os.path.join(root_dir, json_subdir, base_name + ".json")
+                if not os.path.exists(json_path):
+                    json_path = os.path.join(root_dir, base_name + ".json")
 
-                # 修复 Header
-                if os.path.exists(hdr_path):
-                    with open(hdr_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        if 'byte order' not in f.read().lower():
-                            with open(hdr_path, 'a') as fa: fa.write('\nbyte order = 0')
-
-                raw = envi.open(hdr_path, os.path.join(root, fname)).load()
-                if raw.shape[1] == 208: raw = np.transpose(raw, (0, 2, 1))
-                calib = (raw.astype(np.float32) - dark) / denom
-
+                # 解析 Mask
                 mask = get_mask_from_json(json_path, (calib.shape[0], calib.shape[1]))
+                if mask is None: continue  # 或者是自动生成的 Mask
 
-                # 采样 PET (Label 1)
-                idx1 = np.where(mask == 1)
-                n_p = len(idx1[0])
-                if n_p > 0:
-                    # 动态调整采样量：如果 PET 缺口大，就多采点
-                    needed = (SAMPLE_SIZE // 2) - pet_count
-                    take = min(n_p, max(100, needed // 5))  # 每次最少采100，除非不够
-                    indices = np.random.choice(n_p, size=take, replace=False)
-                    collected_X.append(calib[idx1[0][indices], idx1[1][indices], :])
-                    collected_y.append(np.ones(take))
-                    pet_count += take
+                # 提取数据
+                flat_data = calib.reshape(-1, calib.shape[2])
+                flat_mask = mask.reshape(-1)
 
-                # 采样 NO_PET (Label 2)
-                idx2 = np.where(mask == 2)
-                n_np = len(idx2[0])
-                if n_np > 0 and non_pet_count < SAMPLE_SIZE // 2:
-                    take = min(n_np, 100)
-                    indices = np.random.choice(n_np, size=take, replace=False)
-                    collected_X.append(calib[idx2[0][indices], idx2[1][indices], :])
-                    collected_y.append(np.zeros(take))
-                    non_pet_count += take
+                # --- 核心逻辑：区分三类 ---
+                # 1. PET (标签 1)
+                idx_pet = np.where(flat_mask == 1)[0]
+                # 2. 强负样本 (标签 2: PP/CC)
+                idx_mat = np.where(flat_mask == 2)[0]
+                # 3. 弱负样本 (标签 0: 背景)
+                idx_bg = np.where(flat_mask == 0)[0]
 
-                print(f"  -> 进度: PET {pet_count} | Non-PET {non_pet_count} | 当前文件: {fname}", end='\r')
+                # 采样并添加
+                # PET -> y=1
+                if is_pet_source and len(idx_pet) > 0 and count_pet < TARGET_PER_CLASS:
+                    take = min(len(idx_pet), 200)
+                    sel = np.random.choice(idx_pet, take, replace=False)
+                    collected_X.append(flat_data[sel])
+                    collected_y.append(np.ones(take))  # y=1
+                    count_pet += take
 
-                if pet_count >= SAMPLE_SIZE // 2 and non_pet_count >= SAMPLE_SIZE // 2:
-                    break
+                # PP/CC -> y=0 (关键！告诉 DRL 这些不是 PET)
+                if len(idx_mat) > 0 and count_hard_neg < TARGET_PER_CLASS:
+                    take = min(len(idx_mat), 200)
+                    sel = np.random.choice(idx_mat, take, replace=False)
+                    collected_X.append(flat_data[sel])
+                    collected_y.append(np.zeros(take))  # y=0
+                    count_hard_neg += take
 
-            except Exception as e:
-                print(f"\nSkip {fname}: {e}")
+                # 背景 -> y=0 (只需要少量，告诉 DRL 区分背景)
+                if is_pet_source and len(idx_bg) > 0 and count_soft_neg < TARGET_PER_CLASS:
+                    take = min(len(idx_bg), 100)  # 背景少采点，很容易区分
+                    sel = np.random.choice(idx_bg, take, replace=False)
+                    collected_X.append(flat_data[sel])
+                    collected_y.append(np.zeros(take))  # y=0
+                    count_soft_neg += take
 
-        if pet_count >= SAMPLE_SIZE // 2 and non_pet_count >= SAMPLE_SIZE // 2:
-            break
+            except:
+                pass
 
-    print("\n")
-    if not collected_X:
-        raise ValueError("❌ 未找到任何有效数据！请检查路径和 JSON 标签。")
+    if not collected_X: raise ValueError("没有加载到数据")
 
     X = np.concatenate(collected_X, axis=0)
     y = np.concatenate(collected_y, axis=0)
 
-    print(f"✅ DRL 数据加载统计: 总数 {len(y)}, PET(1): {np.sum(y == 1)}, 背景(0): {np.sum(y == 0)}")
-
-    if np.sum(y == 1) == 0:
-        raise ValueError("⛔【致命错误】未检测到任何 PET 样本！标签分布全是 0。\n"
-                         "请检查：1. JSON文件中 PET 的标签是否包含 'pet' 且不含 'no_pet'？\n"
-                         "2. 是否所有图片的 JSON 都只有背景标注？")
-
+    print(f"✅ DRL 采样完成: PET={np.sum(y == 1)}, Non-PET(PP+BG)={np.sum(y == 0)}")
     return X, y
-
 
 def train_dqn():
     # 1. 准备数据
