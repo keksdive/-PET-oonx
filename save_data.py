@@ -1,156 +1,206 @@
-import numpy as np
 import os
+import numpy as np
 import spectral.io.envi as envi
-import cv2
+import glob
 import json
-import gc
+import cv2
+import random
 
-# ================= 🔧 数据集配置 =================
+# ================= ⚙️ 多源数据集配置区域 =================
 DATASETS = [
-    # 1. PET 文件夹 (包含 PET 标注)
+    # 1. PET 文件夹
     {
         "spe_dir": r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-PET",
         "json_dir": r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-PET\fake_images"
     },
-    # 2. 非 PET 文件夹 (包含 PP, CC 等标注)
+    # 2. 非 PET 文件夹 (CC)
     {
-        "spe_dir": r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-noPET",
-        "json_dir": r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-noPET\fake_images"
+        "spe_dir": r"I:\SPEDATA\高谱相机数据集\训练集\no_PET\CC",
+        "json_dir": None
+    },
+    # 3. 非 PET 文件夹 (PA)
+    {
+        "spe_dir": r"I:\SPEDATA\高谱相机数据集\训练集\no_PET\PA",
+        "json_dir": None
     }
 ]
 
-# 公共校准文件
-WHITE_REF_HDR = r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\DWA\white_ref.hdr"
-DARK_REF_HDR = r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\DWA\black_ref.hdr"
-SAVE_DIR = r"I:\Hyperspectral Camera Dataset\Nump_data"
+# 输出保存路径
+OUTPUT_DIR = r"D:\DRL\DRL1\.gitignore\data"
 
-if not os.path.exists(SAVE_DIR): os.makedirs(SAVE_DIR)
+# 标签定义
+LABEL_MAP = {
+    "PET": 1,
+    "CC": 2,
+    "PA": 3,
+    "PP": 4,
+    "OTHER": 5,
+    "醋酸": 2  # 中文兼容
+}
+
+# 采样参数
+SAMPLES_PER_IMAGE = 2000
+THRESHOLD_RATIO = 0.15
+TARGET_BANDS = 208  # 强制对齐波段数
 
 
-# =================================================
+# =======================================================
 
-def fix_header_byte_order(hdr_path):
-    if not os.path.exists(hdr_path): return
+def repair_hdr_file(hdr_path):
+    """自动修复缺少的 byte order"""
     try:
         with open(hdr_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
-        if not any('byte order' in line.lower() for line in lines):
-            with open(hdr_path, 'a') as f: f.write('\nbyte order = 0')
+        content = "".join(lines).lower()
+        if "byte order" not in content:
+            # print(f"🔧 修复头文件: {os.path.basename(hdr_path)}")
+            lines.append("\nbyte order = 0\n")
+            with open(hdr_path, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
     except:
         pass
 
 
-def load_calib_hdr(hdr_path):
-    fix_header_byte_order(hdr_path)
-    spe_path = hdr_path.replace('.hdr', '.spe')
-    if not os.path.exists(spe_path):
-        spe_path = os.path.splitext(hdr_path)[0] + ".spe"
-    img = envi.open(hdr_path, spe_path).load()
-    if img.shape[1] == 208: img = np.transpose(img, (0, 2, 1))
-    return np.array(img, dtype=np.float32)
-
-
-def get_mask_from_json(json_path, img_shape):
-    """
-    智能解析 JSON:
-    - Label 1: PET
-    - Label 2: PP, PE, CC, No_PET (强负样本)
-    - Label 0: 剩余未标注区域 (背景)
-    """
-    if not os.path.exists(json_path): return None
+def load_envi_image(hdr_path):
+    """加载并对齐 ENVI 图像"""
     try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        repair_hdr_file(hdr_path)
+        base = os.path.splitext(hdr_path)[0]
+        spe_path = base + ".spe"
+        if not os.path.exists(spe_path): spe_path = base + ".raw"
+        if not os.path.exists(spe_path): return None
 
-        mask = np.zeros(img_shape, dtype=np.uint8)  # 初始化全 0 (背景)
-        found_any = False
+        img_obj = envi.open(hdr_path, spe_path)
+        img_data = np.array(img_obj.load(), dtype=np.float32)
 
-        for shape in data['shapes']:
-            lbl = shape['label'].lower()
-            pts = np.array(shape['points'], dtype=np.int32)
+        # 维度修正 (H, W, B)
+        shape = img_data.shape
+        if shape[1] < shape[2] and shape[1] in [206, 208]:
+            img_data = np.transpose(img_data, (0, 2, 1))
 
-            # === 核心逻辑：根据标签名分类 ===
-            if 'pet' in lbl and 'no' not in lbl:
-                # 是 PET -> Label 1
-                cv2.fillPoly(mask, [pts], 1)
-                found_any = True
-            else:
-                # 其他所有标注 (PP, CC, background, no_pet) -> Label 2
-                # 这代表“已知非 PET 材质”
-                cv2.fillPoly(mask, [pts], 2)
-                found_any = True
+        # 波段对齐 (206 -> 208)
+        H, W, C = img_data.shape
+        if TARGET_BANDS is not None and C != TARGET_BANDS:
+            flat = img_data.reshape(-1, C)
+            flat_resized = cv2.resize(flat, (TARGET_BANDS, H * W), interpolation=cv2.INTER_LINEAR)
+            img_data = flat_resized.reshape(H, W, TARGET_BANDS)
 
-        return mask if found_any else None
+        return img_data
     except Exception as e:
-        print(f"JSON 解析错误: {e}")
+        print(f"❌ 加载失败 {os.path.basename(hdr_path)}: {e}")
         return None
 
 
-def process_and_save_all():
-    print("📦 开始智能处理数据...")
-
+def get_mask_from_json(json_path, image_shape):
+    H, W = image_shape[:2]
+    mask = np.zeros((H, W), dtype=np.uint8)
     try:
-        white = load_calib_hdr(WHITE_REF_HDR)
-        dark = load_calib_hdr(DARK_REF_HDR)
-        denom = (white - dark)
-        denom[denom == 0] = 1e-6
-    except Exception as e:
-        print(f"❌ 校准文件加载失败: {e}")
-        return
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        for shape in data.get('shapes', []):
+            points = np.array(shape['points'], dtype=np.int32)
+            cv2.fillPoly(mask, [points], 1)
+        return mask.astype(bool)
+    except:
+        return None
 
-    total_success = 0
 
-    for config in DATASETS:
-        spe_dir = config["spe_dir"]
-        json_dir = config["json_dir"]
+def get_mask_from_threshold(img_data):
+    B = img_data.shape[2]
+    start, end = 10, B - 10
+    intensity = np.mean(img_data[:, :, start:end], axis=2)
+    return intensity > (np.max(intensity) * THRESHOLD_RATIO)
 
-        print(f"\n📂 扫描: {spe_dir}")
 
-        if not os.path.exists(spe_dir):
-            print(f"⚠️ 路径不存在: {spe_dir}")
-            continue
+def determine_label(path_string):
+    """
+    [核心修复] 更智能的标签判断逻辑
+    1. 优先匹配具体的非PET材质 (CC, PA, PP)
+    2. 只有在不包含 'no_PET' 的情况下，才匹配 PET
+    """
+    path_upper = path_string.upper()
 
-        files = [f for f in os.listdir(spe_dir) if f.lower().endswith('.spe')]
+    # 1. 优先检查具体材质 (防止被 no_PET 中的 PET 关键字误导)
+    for key in ["CC", "PA", "PP", "醋酸", "OTHER"]:
+        if key in path_upper:
+            return LABEL_MAP.get(key, LABEL_MAP.get("OTHER")), key
 
-        for fname in files:
-            try:
-                base_name = os.path.splitext(fname)[0]
-                spe_path = os.path.join(spe_dir, fname)
-                hdr_path = os.path.join(spe_dir, base_name + ".hdr")
-                json_path = os.path.join(json_dir, base_name + ".json")
+    # 2. 检查 PET，但必须排除 no_PET 文件夹
+    if "PET" in path_upper:
+        # 如果路径里有 no_PET 或 no-PET，这绝对不是 PET 类别
+        if "NO_PET" in path_upper or "NO-PET" in path_upper:
+            return None, None
+        return LABEL_MAP["PET"], "PET"
 
-                if not os.path.exists(hdr_path) or not os.path.exists(json_path):
-                    continue
+    return None, None
 
-                # 1. 读取数据
-                fix_header_byte_order(hdr_path)
-                raw = envi.open(hdr_path, spe_path).load()
-                if raw.shape[1] == 208: raw = np.transpose(raw, (0, 2, 1))
 
-                # 2. 校准
-                calib = (raw.astype(np.float32) - dark) / denom
+def process_and_save_data():
+    if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR)
+    all_pixels, all_labels = [], []
+    stats = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    total_files = 0
 
-                # 3. 获取 Mask (智能识别 Label 1 和 2)
-                mask = get_mask_from_json(json_path, (calib.shape[0], calib.shape[1]))
+    print(f"🚀 开始处理 {len(DATASETS)} 个数据源...")
 
-                if mask is not None:
-                    # 保存 (文件名加前缀区分来源)
-                    prefix = "Data"
-                    np.save(os.path.join(SAVE_DIR, f"{prefix}_{base_name}_data.npy"), calib)
-                    np.save(os.path.join(SAVE_DIR, f"{prefix}_{base_name}_mask.npy"), mask)
+    for ds_config in DATASETS:
+        spe_dir, json_dir = ds_config["spe_dir"], ds_config.get("json_dir")
+        if not os.path.exists(spe_dir): continue
 
-                    total_success += 1
-                    print(f"  [√] 已保存: {base_name} (含 Label: {np.unique(mask)})")
+        hdr_files = glob.glob(os.path.join(spe_dir, "**", "*.hdr"), recursive=True)
+        print(f"📂 扫描: {spe_dir} ({len(hdr_files)} files)")
 
-                del raw, calib, mask
-                gc.collect()
+        for idx, hdr_path in enumerate(hdr_files):
+            if "ref" in os.path.basename(hdr_path).lower(): continue
 
-            except Exception as e:
-                print(f"  [X] 处理失败 {fname}: {e}")
+            full_path_str = hdr_path  # 使用全路径进行判断
+            label_id, label_name = determine_label(full_path_str)
+            if label_id is None: continue
 
-    print(f"\n✨ 全部完成！共生成 {total_success} 组数据。")
-    print("Mask 定义: 0=背景, 1=PET, 2=其他材质(PP/CC等)")
+            img_data = load_envi_image(hdr_path)
+            if img_data is None: continue
+
+            fg_mask = None
+            mode = "Auto"
+            if json_dir:
+                base = os.path.splitext(os.path.basename(hdr_path))[0]
+                jp = os.path.join(json_dir, base + ".json")
+                if os.path.exists(jp):
+                    fg_mask = get_mask_from_json(jp, img_data.shape)
+                    mode = "JSON"
+
+            if fg_mask is None: fg_mask = get_mask_from_threshold(img_data)
+
+            # 采样
+            for m, lid in [(fg_mask, label_id), (~fg_mask, 0)]:
+                pix = img_data[m]
+                if len(pix) > SAMPLES_PER_IMAGE:
+                    pix = pix[np.random.choice(len(pix), SAMPLES_PER_IMAGE, replace=False)]
+                if len(pix) > 0:
+                    all_pixels.append(pix)
+                    all_labels.append(np.full(len(pix), lid, dtype=np.int32))
+                    stats[lid] += len(pix)
+
+            total_files += 1
+            if idx % 20 == 0:
+                print(f"   [{idx + 1}] {os.path.basename(hdr_path):<20} | 🏷️ {label_name}({label_id}) | ⚙️ {mode}")
+
+    if not all_pixels: return print("❌ 无数据")
+
+    print("\n📦 合并数据...")
+    X = np.vstack(all_pixels)
+    y = np.concatenate(all_labels)
+    perm = np.random.permutation(len(y))
+    X, y = X[perm], y[perm]
+
+    print("-" * 30)
+    print(f"✅ 完成! 总文件: {total_files}")
+    for k, v in stats.items():
+        if v > 0: print(f"  Label {k}: {v}")
+
+    np.save(os.path.join(OUTPUT_DIR, "X.npy"), X)
+    np.save(os.path.join(OUTPUT_DIR, "y.npy"), y)
 
 
 if __name__ == "__main__":
-    process_and_save_all()
+    process_and_save_data()

@@ -17,7 +17,7 @@ mixed_precision.set_global_policy('mixed_float16')
 # ================= 🔧 配置区域 =================
 CONFIG_FILE = "best_bands_config.json"
 # 预处理数据的存放目录 (请确保 save_data.py 输出到了这里)
-NPY_DIR = r"D:\DRL\DRL1\processed_data"
+NPY_DIR = r"D:\DRL\DRL1\data"
 # 模型保存目录
 MODEL_SAVE_DIR = r"D:\DRL\DRL1\models"
 
