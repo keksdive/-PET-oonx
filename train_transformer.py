@@ -8,7 +8,7 @@ import random
 
 # ================= 🔧 配置 =================
 CONFIG_FILE = "best_bands_config.json"
-DATA_ROOT = r"I:\SPEDATA\NP_data"  # 指向 save_data.py 的输出
+DATA_ROOT = r"E:\SPEDATA\NP_data"  # 指向 save_data.py 的输出
 MODEL_SAVE_PATH = r"D:\DRL\DRL1\final_model.h5"
 
 BATCH_SIZE = 64

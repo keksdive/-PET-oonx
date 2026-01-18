@@ -3,6 +3,7 @@ import os
 import json
 import tensorflow as tf
 import time
+from visualization import visualize_spectral_selection
 
 # 引用现有模块
 from entropy_utils import precompute_entropies, precompute_mutual_information
@@ -11,7 +12,7 @@ from reward_utils import calculate_reward
 
 # ================= 🔧 配置区域 =================
 # [关键] 指向 save_data.py 输出的文件夹
-DATA_DIR = r"I:\SPEDATA\NP_data"
+DATA_DIR = r"E:\SPEDATA\NP_data"
 
 # 结果保存配置
 CONFIG_OUTPUT_FILE = "best_bands_config.json"
@@ -44,21 +45,21 @@ def load_representative_data_for_drl():
     dataset_configs = [
         # 1. PET 文件夹 (需要 JSON 区分瓶片和杂质)
         {
-            "root": r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-PET",
+            "root": r"M:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-PET",
             "json_subdir": "fake_images",
             "is_pet_folder": True,
             "use_json": True  # 使用 JSON 解析
         },
         # 2. CC (纯材质，无需 JSON，整张图除了背景都是 CC)
         {
-            "root": r"I:\SPEDATA\高谱相机数据集\训练集\no_PET\CC",
+            "root": r"E:\SPEDATA\高谱相机数据集\训练集\no_PET\CC",
             "json_subdir": None,
             "is_pet_folder": False,
             "use_json": False  # 不用 JSON，自动提取
         },
         # 3. PA (纯材质，无需 JSON)
         {
-            "root": r"I:\SPEDATA\高谱相机数据集\训练集\no_PET\PA",
+            "root": r"E:\SPEDATA\高谱相机数据集\训练集\no_PET\PA",
             "json_subdir": None,
             "is_pet_folder": False,
             "use_json": False
@@ -194,86 +195,102 @@ import glob
 
 def load_data_from_npy(data_dir, total_samples=10000):
     """
-    从 save_data.py 生成的 .npy 文件中加载数据
-    PET 文件夹 -> 标签 1
-    其他文件夹 (CC, PA, PP, OTHER) -> 标签 0
+    [优化版] 加载数据并赋予多分类标签，用于 DRL 特征筛选
+    标签定义: 0=背景/其他, 1=PET, 2=CC, 3=PA
     """
-    print(f"🚀 [DRL] 正在从 {data_dir} 加载 .npy 数据...")
+    print(f"🚀 [DRL] 正在从 {data_dir} 加载多材质数据 (PET/CC/PA)...")
 
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"❌ 找不到数据目录: {data_dir}")
 
+    # 查找各类别的文件夹 (确保 save_data.py 已经按文件夹分好了)
+    # 假设 save_data.py 生成的结构是: data_dir/PET, data_dir/CC, data_dir/PA
+    import glob
     all_files = glob.glob(os.path.join(data_dir, "**", "*.npy"), recursive=True)
-    if not all_files:
-        raise ValueError("❌ 目录下没有找到 .npy 文件，请先运行 save_data.py")
+
+    # 定义类别对应的关键字和标签
+    class_config = [
+        {"key": "PET", "label": 1},
+        {"key": "CC", "label": 2},
+        {"key": "PA", "label": 3}
+        # 其他未匹配的默认为 0
+    ]
+
+    # 分配文件到类别
+    file_groups = {0: [], 1: [], 2: [], 3: []}
+
+    for f in all_files:
+        path_upper = os.path.dirname(f).upper()
+        assigned = False
+        for cfg in class_config:
+            if cfg["key"] in path_upper:
+                file_groups[cfg["label"]].append(f)
+                assigned = True
+                break
+        if not assigned:
+            file_groups[0].append(f)  # 归为背景或其他
+
+    print(
+        f"   📊 文件分布: PET={len(file_groups[1])}, CC={len(file_groups[2])}, PA={len(file_groups[3])}, Other={len(file_groups[0])}")
+
+    # 均衡采样：为了让 Agent 重视每种材质，每类采样数量应大致相等
+    target_per_class = total_samples // 4
 
     X_list = []
     y_list = []
 
-    # 简单的平衡采样逻辑
-    pet_files = [f for f in all_files if "PET" in os.path.dirname(f)]
-    other_files = [f for f in all_files if "PET" not in os.path.dirname(f)]
-
-    print(f"   发现 PET 文件: {len(pet_files)} 个, 非 PET 文件: {len(other_files)} 个")
-
-    # 每个类别采样的目标数量
-    target_per_class = total_samples // 2
-
-    def sample_from_files(file_list, target_count, label):
-        current_count = 0
+    def sample_category(file_list, label, count):
+        if not file_list: return
         collected_x = []
-
-        # 随机打乱文件顺序
+        current_count = 0
         np.random.shuffle(file_list)
 
         for f in file_list:
-            if current_count >= target_count: break
+            if current_count >= count: break
             try:
                 data = np.load(f)  # shape (H, W, Bands)
-                # 展平
                 flat = data.reshape(-1, data.shape[2])
 
-                # 从每张图中随机取 500 个点 (避免单张图主导)
-                n_take = min(len(flat), 500)
-                idx = np.random.choice(len(flat), n_take, replace=False)
+                # 简单背景去除 (假设值很小的是背景，如果本来就是背景类则不去除)
+                if label != 0:
+                    intensity = np.mean(flat, axis=1)
+                    flat = flat[intensity > 0.05]  # 过滤纯黑背景
 
+                if len(flat) == 0: continue
+
+                # 随机采样点
+                take = min(len(flat), 500)
+                idx = np.random.choice(len(flat), take, replace=False)
                 collected_x.append(flat[idx])
-                current_count += n_take
-            except Exception as e:
-                print(f"⚠️ 读取错误 {f}: {e}")
+                current_count += take
+            except:
+                pass
 
-        if not collected_x: return np.array([]), np.array([])
+        if collected_x:
+            X_part = np.concatenate(collected_x, axis=0)
+            # 再次截断到目标数量
+            if len(X_part) > count:
+                X_part = X_part[:count]
+            y_part = np.full(len(X_part), label)
+            X_list.append(X_part)
+            y_list.append(y_part)
 
-        X_part = np.concatenate(collected_x, axis=0)
-        y_part = np.full(len(X_part), label)
+    # 对每一类进行采样
+    for label, files in file_groups.items():
+        sample_category(files, label, target_per_class)
 
-        # 如果采多了，截断
-        if len(X_part) > target_count:
-            idx = np.random.choice(len(X_part), target_count, replace=False)
-            X_part = X_part[idx]
-            y_part = y_part[idx]
+    if not X_list:
+        raise ValueError("❌ 未加载到任何有效数据，请检查路径！")
 
-        return X_part, y_part
+    X = np.concatenate(X_list, axis=0)
+    y = np.concatenate(y_list, axis=0)
 
-    # 采样 PET (Label 1)
-    X_pos, y_pos = sample_from_files(pet_files, target_per_class, 1)
-
-    # 采样 非PET (Label 0)
-    X_neg, y_neg = sample_from_files(other_files, target_per_class, 0)
-
-    if len(X_pos) == 0 or len(X_neg) == 0:
-        raise ValueError("❌ 采样失败：某一类数据为空，请检查 .npy 文件路径结构")
-
-    X = np.concatenate([X_pos, X_neg], axis=0)
-    y = np.concatenate([y_pos, y_neg], axis=0)
-
-    # 再次打乱
+    # 打乱数据
     idx = np.arange(len(X))
     np.random.shuffle(idx)
 
-    print(f"✅ 数据加载完成: 总数 {len(X)}, 正样本 {np.sum(y == 1)}, 负样本 {np.sum(y == 0)}")
+    print(f"✅ 数据加载完成: 总样本 {len(X)}, 包含标签 {np.unique(y)}")
     return X[idx], y[idx]
-
 
 
 
@@ -288,6 +305,16 @@ if __name__ == "__main__":
     # 1. 加载数据
     X_sample, y_sample = load_data_from_npy(DATA_DIR, SAMPLE_SIZE)
 
+    # --- 新增：清洗无效值 ---
+    print("🧹 正在清理异常数值 (NaN/Inf)...")
+    # 将 Inf 替换为 0，将 NaN 替换为 0
+    X_sample = np.nan_to_num(X_sample, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # 可选：剔除极端异常值（例如反射率不应大于 2 或小于 0）
+    X_sample = np.clip(X_sample, 0.0, 2.0)
+    # -----------------------
+
+    num_bands = X_sample.shape[1]
     num_bands = X_sample.shape[1]
     print(f"🔍 波段总数: {num_bands}")
 
@@ -375,3 +402,25 @@ if __name__ == "__main__":
         json.dump(output_data, f, indent=4)
 
     print(f"💾 波段配置已保存至: {CONFIG_OUTPUT_FILE}")
+    # ... (之前的代码: 保存 json) ...
+
+    with open(CONFIG_OUTPUT_FILE, 'w') as f:
+        json.dump(output_data, f, indent=4)
+
+    print(f"💾 波段配置已保存至: {CONFIG_OUTPUT_FILE}")
+
+    # ================= 🆕 新增可视化调用 =================
+    print("-" * 50)
+    print("🖼️ 正在生成结果可视化...")
+
+    # 使用之前加载的 X_sample, y_sample 数据
+    # X_sample 包含了 PET, CC, PA 的混合数据
+    visualize_spectral_selection(
+        X_sample,
+        y_sample,
+        best_bands,
+        save_path="final_spectral_analysis.png"
+    )
+
+    print("🎉 所有任务完成！请查看生成的 .png 图片。")
+    # ====================================================

@@ -8,3 +8,6 @@ HSIPETProject/.vs/HSIPETProject.slnx/
 *.h5
 *.npy
 __pycache__/
+# 忽略 Visual Studio 缓存文件夹
+.vs/
+*.ipch

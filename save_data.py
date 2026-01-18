@@ -8,17 +8,17 @@ import json
 # ================= ⚙️ 配置区域 =================
 # 原始数据源
 DATASETS = [
-    {"spe_dir": r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-PET"},
-    {"spe_dir": r"I:\SPEDATA\高谱相机数据集\训练集\no_PET\CC"},
-    {"spe_dir": r"I:\SPEDATA\高谱相机数据集\训练集\no_PET\PA"}
+    {"spe_dir": r"M:\12.12数据集（单排光源）\12.12数据集（单排光源）\train-PET"},
+    {"spe_dir": r"E:\SPEDATA\高谱相机数据集\训练集\no_PET\CC"},
+    {"spe_dir": r"E:\SPEDATA\高谱相机数据集\训练集\no_PET\PA"}
 ]
 
 # 校准文件
-WHITE_REF = r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\DWA\white_ref.hdr"
-DARK_REF = r"L:\12.12数据集（单排光源）\12.12数据集（单排光源）\DWA\black_ref.hdr"
+WHITE_REF = r"M:\12.12数据集（单排光源）\12.12数据集（单排光源）\DWA\white_ref.hdr"
+DARK_REF = r"M:\12.12数据集（单排光源）\12.12数据集（单排光源）\DWA\black_ref.hdr"
 
 # 输出根目录 (生成的npy将保存在这里)
-OUTPUT_ROOT = r"I:\SPEDATA\NP_data"
+OUTPUT_ROOT = r"E:\SPEDATA\NP_data"
 
 # 统一波段数 (必须与 DRL 选出的波段数对应的原始输入一致)
 TARGET_BANDS = 208
