@@ -1,0 +1,13 @@
+# 忽略 calibration 文件夹下的所有内容
+HSI_PET_Sorter/assets/calibration/
+HSIPETProject/.vs/HSIPETProject.slnx/
+
+# 忽略其他常见的大文件后缀 (保险起见)
+*.spe
+*.onnx
+*.h5
+*.npy
+__pycache__/
+# 忽略 Visual Studio 缓存文件夹
+.vs/
+*.ipch
