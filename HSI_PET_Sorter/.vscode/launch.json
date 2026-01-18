@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "C++ Launch (MSVC)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Debug/HSI_App.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/cpp_inference",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "E:\\Opencv\\opencv\\build\\x64\\vc16\\bin;${env:PATH}"
+                }
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}

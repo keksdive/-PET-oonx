@@ -1,0 +1,32 @@
+{
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "C/C++: cl.exe build active file",
+            "command": "cl.exe",
+            "args": [
+                "/Zi",                // 生成调试信息
+                "/EHsc",              // 启用异常处理
+                "/nologo",            // 隐藏启动版权标志
+                "/Fe:", "${fileDirname}\\${fileBasenameNoExtension}.exe", // 输出文件名
+                "${file}",            // 当前文件
+                "/I", "E:\\Opencv\\opencv\\build\\include", // 头文件路径
+                "/link",              // 开始链接参数
+                "/LIBPATH:E:\\Opencv\\opencv\\build\\x64\\vc16\\lib", // 库路径
+                "opencv_world460.lib" // 具体的库名（请确认你的版本号）
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "使用 MSVC 编译器"
+        }
+    ],
+    "version": "2.0.0"
+}

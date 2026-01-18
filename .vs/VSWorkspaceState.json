@@ -1,0 +1,16 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\HSI_PET_Sorter",
+    "\\HSI_PET_Sorter\\cpp_inference",
+    "\\HSI_PET_Sorter\\cpp_inference\\build",
+    "\\HSI_PET_Sorter\\cpp_inference\\include",
+    "\\HSI_PET_Sorter\\cpp_inference\\out",
+    "\\HSI_PET_Sorter\\cpp_inference\\out\\build",
+    "\\HSI_PET_Sorter\\cpp_inference\\out\\build\\x64-Debug",
+    "\\HSI_PET_Sorter\\cpp_inference\\out\\build\\x64-Debug\\.cmake",
+    "\\HSI_PET_Sorter\\cpp_inference\\src"
+  ],
+  "SelectedNode": "\\HSI_PET_Sorter\\cpp_inference\\CMakeLists.txt",
+  "PreviewInSolutionExplorer": false
+}

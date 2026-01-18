@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "MSVC",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "E:/Opencv/opencv/build/include"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            // 路径通常如下，请根据你的 VS 版本（Community/Pro）确认
+            "compilerPath": "I:/visual studio/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}
