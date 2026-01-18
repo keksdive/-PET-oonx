@@ -1,26 +1,37 @@
 import tensorflow as tf
 import tf2onnx
 import os
+import json
 
-# 1. 加载训练好的 H5 模型
-BASE_DIR = r"I:\Hyperspectral Camera Dataset\Processed_Data"
-model_path = os.path.join(BASE_DIR, 'pet_transformer_final1.h5')
-model = tf.keras.models.load_model(model_path)
+# 配置路径
+BASE_DIR = r"D:\DRL\DRL1"  # 你的工作目录
+MODEL_PATH = os.path.join(BASE_DIR, 'final_model.h5')
+CONFIG_FILE = "best_bands_config.json"
+OUTPUT_ONNX_PATH = os.path.join(BASE_DIR, "pet_classifier_multiclass.onnx")
 
-# 2. 定义输入签名
-# 这里的 30 对应你 DQN 选出的波段数量
-# name="input" 必须指定，C++ 推理时会用到这个输入节点名称
-spec = (tf.TensorSpec((None, 30), tf.float32, name="input"),)
+# 1. 读取配置获取波段数
+with open("best_bands_config.json", 'r') as f:
+    bands = json.load(f).get("all_unique_bands", [])
+    num_bands = len(bands)
 
-# 3. 转换并保存
-# opset 建议设为 13 或 15，以支持 MultiHeadAttention 算子
-output_onnx_path = os.path.join(BASE_DIR, "pet_transformer_30bands.onnx")
+model = tf.keras.models.load_model('final_model.h5')
 
+print(f"ℹ️ 模型输入波段数: {num_bands}")
+
+# 2. 加载模型
+model = tf.keras.models.load_model(MODEL_PATH)
+
+# 3. 定义输入签名 (Signature)
+# ⚠️ 关键修改：这里的 shape 必须是 num_bands
+spec = (tf.TensorSpec((None, num_bands), tf.float32, name="input"),)
+
+
+# 4. 转换
 model_proto, _ = tf2onnx.convert.from_keras(
     model,
     input_signature=spec,
     opset=13,
-    output_path=output_onnx_path
+    output_path=OUTPUT_ONNX_PATH
 )
 
-print(f"✅ ONNX 模型已保存至: {output_onnx_path}")
+print(f"✅ ONNX 模型导出成功: {OUTPUT_ONNX_PATH}")
