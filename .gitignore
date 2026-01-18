@@ -1,0 +1,10 @@
+# 忽略整个文件夹
+data/
+models/
+checkpoints/
+__pycache__/
+
+# 忽略大文件后缀
+*.npy
+*.onnx
+*.h5
