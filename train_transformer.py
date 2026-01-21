@@ -6,21 +6,13 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 import os
 import time
 import datetime
+import tf2onnx
 
-# ================= 1. 硬件检查与配置 =================
+# ================= 1. 硬件检查 =================
 gpus = tf.config.list_physical_devices('GPU')
 print(f"\n{'=' * 40}")
-print(f"🖥️ 硬件检测结果: 发现 {len(gpus)} 个 GPU")
-if len(gpus) == 0:
-    print("⚠️ 警告: 未检测到 GPU！模型将使用 CPU 训练，速度会变慢。")
-    print("   -> 已自动切换为 '轻量级 CNN' 模型以适应 CPU。")
-    USE_TRANSFORMER = False  # 无显卡时，禁用 Transformer
-else:
+if len(gpus) > 0:
     print(f"✅ 显卡就绪: {gpus[0].name}")
-    print("   -> 将使用 'Transformer + CNN' 混合模型。")
-    USE_TRANSFORMER = True  # 有显卡时，使用强力模型
-
-    # 启用混合精度加速 (仅限 GPU)
     try:
         from tensorflow.keras import mixed_precision
 
@@ -28,6 +20,8 @@ else:
         print("⚡ 已启用混合精度 (Mixed Precision) 加速")
     except:
         pass
+else:
+    print("⚠️ 未检测到 GPU，将在 CPU 上运行 Transformer (速度较慢)")
 print(f"{'=' * 40}\n")
 
 # ================= 🔧 路径配置 =================
@@ -35,39 +29,31 @@ DATA_DIR = r"E:\SPEDATA\NP_newdata"
 MODEL_SAVE_DIR = r"D:\DRL\DRL1\models"
 if not os.path.exists(MODEL_SAVE_DIR): os.makedirs(MODEL_SAVE_DIR)
 
-# ⚡ 极速配置
-BATCH_SIZE = 2048  # 大批量
+# ⚡ 参数配置
+BATCH_SIZE = 2048
 EPOCHS = 100
 
 
-# ================= 2. 数据管道优化 (关键提速点) =================
+# ================= 2. 数据管道 =================
 def create_dataset(X, y, is_training=True):
-    """
-    使用 tf.data API 构建高性能数据管道
-    """
-    # 1. 创建数据集
     dataset = tf.data.Dataset.from_tensor_slices((X, y))
-
-    # 2. 训练集打乱
     if is_training:
         dataset = dataset.shuffle(buffer_size=10000)
-
-    # 3. 分批
     dataset = dataset.batch(BATCH_SIZE)
-
-    # 4. 【核心优化】缓存与预取
     dataset = dataset.cache()
     dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
-
     return dataset
 
 
-# ================= 3. 模型定义 =================
+# ================= 3. Transformer 模型定义 (强制使用) =================
 def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
+    # 1. Normalization & Attention
     x = layers.LayerNormalization(epsilon=1e-6)(inputs)
     x = layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
     x = layers.Dropout(dropout)(x)
     res = x + inputs
+
+    # 2. Feed Forward Part
     x = layers.LayerNormalization(epsilon=1e-6)(res)
     x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(x)
     x = layers.Dropout(dropout)(x)
@@ -75,11 +61,18 @@ def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
     return x + res
 
 
-def build_model(input_shape, use_transformer=True):
+def build_transformer_model(input_shape):
+    """
+    构建 Hybrid CNN-Transformer 模型
+    结合 CNN 的局部特征提取能力和 Transformer 的全局序列建模能力
+    """
     inputs = layers.Input(shape=input_shape)
+
+    # 增加一个维度以适配 Conv1D: (Batch, Bands) -> (Batch, Bands, 1)
     x = layers.Reshape((input_shape[0], 1))(inputs)
 
-    # 通用 CNN 特征提取层
+    # --- Feature Extraction (CNN) ---
+    # 先用 CNN 提取波谱的局部特征（波峰/波谷的斜率等）
     x = layers.Conv1D(32, 5, padding="same", activation="relu")(x)
     x = layers.BatchNormalization()(x)
     x = layers.MaxPooling1D(2)(x)
@@ -87,55 +80,43 @@ def build_model(input_shape, use_transformer=True):
     x = layers.Conv1D(64, 3, padding="same", activation="relu")(x)
     x = layers.MaxPooling1D(2)(x)
 
-    if use_transformer:
-        # === 显卡模式：Transformer ===
-        x = transformer_encoder(x, 64, 2, 128, 0.1)
-        x = layers.GlobalAveragePooling1D()(x)
-    else:
-        # === CPU模式：纯 CNN ===
-        x = layers.Conv1D(128, 3, padding="same", activation="relu")(x)
-        x = layers.GlobalAveragePooling1D()(x)
+    # --- Sequence Modeling (Transformer) ---
+    # 强制使用 Transformer Encoder
+    # num_heads=2: 关注不同的波段组合模式
+    x = transformer_encoder(x, head_size=64, num_heads=2, ff_dim=128, dropout=0.1)
 
+    # --- Classification Head ---
+    x = layers.GlobalAveragePooling1D()(x)
     x = layers.Dense(64, activation="relu")(x)
     x = layers.Dropout(0.2)(x)
+
+    # 二分类输出 (Sigmoid): 0=背景, 1=PET
     outputs = layers.Dense(1, activation="sigmoid")(x)
 
-    name = "Transformer_Model" if use_transformer else "Fast_CNN_Model"
-    return models.Model(inputs, outputs, name=name)
+    return models.Model(inputs, outputs, name="PET_Transformer_Model")
 
 
-# ================= 4. 自定义回调函数 (移到全局范围) =================
+# ================= 4. 回调函数 =================
 class SmartModelCheckpoint(tf.keras.callbacks.Callback):
-    def __init__(self, save_dir, min_delta=0.001):
+    def __init__(self, save_dir):
         super(SmartModelCheckpoint, self).__init__()
         self.save_dir = save_dir
-        self.min_delta = min_delta
         self.best_acc = -float('inf')
 
     def on_epoch_end(self, epoch, logs=None):
         current_acc = logs.get('val_accuracy')
-
-        # 如果当前精度 > (历史最高 + 门槛)
-        if current_acc is not None and current_acc > (self.best_acc + self.min_delta):
-            # 1. 准备文件名
+        if current_acc is not None and current_acc > self.best_acc:
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-            acc_str = f"{current_acc:.4f}"
-
-            # Windows 文件名不建议用— (em dash)，改用标准横杠 -
-            filename = f"classic_{time_str}_acc_{acc_str}.h5"
+            filename = f"pet_transformer_{time_str}_acc_{current_acc:.4f}.h5"
             save_path = os.path.join(self.save_dir, filename)
-
-            # 2. 保存模型
             self.model.save(save_path)
-            print(f"\n💾 [新纪录] 精度从 {self.best_acc:.4f} 提升至 {current_acc:.4f}，已保存: {filename}")
-
-            # 3. 更新最高分
+            print(f"\n💾 [新纪录] 精度: {current_acc:.4f} -> 已保存: {filename}")
             self.best_acc = current_acc
 
 
 # ================= 5. 主流程 =================
 if __name__ == "__main__":
-    print("🚀 正在加载数据集 (X.npy, y.npy)...")
+    print("🚀 正在加载新生成的二分类数据集 (X.npy, y.npy)...")
     x_path = os.path.join(DATA_DIR, "X.npy")
     y_path = os.path.join(DATA_DIR, "y.npy")
 
@@ -143,62 +124,49 @@ if __name__ == "__main__":
         print(f"❌ 错误：文件不存在 {x_path}")
         exit()
 
-    # 强制 float32
     X = np.load(x_path).astype(np.float32)
     y = np.load(y_path).astype(np.float32)
 
-    # 标签二值化
-    y_binary = np.where(y == 1, 1, 0).astype(np.float32)
-
-    print(f"📊 数据加载完毕: {X.shape}, 正样本率: {np.mean(y_binary):.2%}")
+    print(f"📊 数据加载完毕: {X.shape}")
+    print(f"   正样本(PET): {np.sum(y == 1)} | 负样本(BG/CC/PA): {np.sum(y == 0)}")
 
     # 划分数据
-    X_train, X_test, y_train, y_test = train_test_split(X, y_binary, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # 构建高速数据管道
-    print("⚡ 构建 tf.data 高速流水线...")
+    # 构建数据管道
+    print("⚡ 构建高速数据流水线...")
     train_ds = create_dataset(X_train, y_train, is_training=True)
     val_ds = create_dataset(X_test, y_test, is_training=False)
 
-    # 构建模型
-    model = build_model(input_shape=(X.shape[1],), use_transformer=USE_TRANSFORMER)
-    print(f"🏗️ 模型架构: {model.name}")
+    # 构建并编译模型
+    model = build_transformer_model(input_shape=(X.shape[1],))
+    model.summary()
 
     model.compile(optimizer=optimizers.Adam(1e-4),
-                  loss="binary_crossentropy",
+                  loss="binary_crossentropy",  # 适用于 0/1 二分类
                   metrics=["accuracy"])
 
-    # 实例化自定义回调
-    auto_save_callback = SmartModelCheckpoint(
-        save_dir=MODEL_SAVE_DIR,
-        min_delta=0.0  # 只要有提升就保存
-    )
+    print(f"🔥 开始训练 Transformer 模型 (Batch Size={BATCH_SIZE})...")
 
-    print(f"🔥 开始训练 (Batch Size={BATCH_SIZE})...")
-    start_time = time.time()
-
-    # 训练 (仅一次)
+    # 训练
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
-        callbacks=[auto_save_callback]
+        callbacks=[SmartModelCheckpoint(save_dir=MODEL_SAVE_DIR)]
     )
 
-    total_time = time.time() - start_time
-    print(f"✅ 训练完成！总耗时: {total_time / 60:.2f} 分钟")
+    print("✅ 训练完成，正在导出 ONNX...")
 
     # 导出最终模型
-    final_path = os.path.join(MODEL_SAVE_DIR, "final_model.h5")
+    final_path = os.path.join(MODEL_SAVE_DIR, "final_transformer_model.h5")
     model.save(final_path)
 
-    # 导出 ONNX
-    import tf2onnx
-
+    # 导出 ONNX (用于C++部署)
     spec = (tf.TensorSpec((None, X.shape[1]), tf.float32, name="input"),)
     model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, opset=13)
 
-    onnx_path = os.path.join(MODEL_SAVE_DIR, "pet_classifier.onnx")
+    onnx_path = os.path.join(MODEL_SAVE_DIR, "pet_transformer.onnx")
     with open(onnx_path, "wb") as f:
         f.write(model_proto.SerializeToString())
-    print(f"🏆 ONNX 导出完成: {onnx_path}")
+    print(f"🏆 ONNX 导出成功: {onnx_path}")

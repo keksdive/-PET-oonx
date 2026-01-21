@@ -3,23 +3,17 @@ import os
 import json
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
-
-# 引用你的模块
-from entropy_utils import precompute_entropies, precompute_mutual_information
 from agent import BandSelectionAgent
-from reward_utils import calculate_reward
+from reward_utils import calculate_reward_supervised  # 确保这里引用的是修改后的 k-NN 版本
 
 # ================= 🔧 配置区域 =================
-# [重要] 这里指向 save_data.py 生成的 .npy 文件夹
-DATA_DIR = r"E:\SPEDATA\NP_newdata"
-
-# [配置] 输出的波段数量
+DATA_DIR = r"E:\SPEDATA\NP_new1.0.2"  # 指向你新生成的数据路径
 NUM_BANDS_TO_SELECT = 30
+TOTAL_EPISODES = 500
 
-# [配置] 训练轮数
-TOTAL_EPISODES = 300
-ALPHA = 0.8  # 互信息权重
-
+# DRL 专用数据集大小 (每类样本数)
+# 建议：每类 2500，总共 5000。太大会导致 k-NN 计算奖励变慢。
+SAMPLES_PER_CLASS = 2500
 # ===============================================
 
 # 显存配置
@@ -27,94 +21,102 @@ gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
         tf.config.experimental.set_memory_growth(gpus[0], True)
-        print("✅ GPU 显存按需分配已开启")
-    except RuntimeError as e:
-        print(e)
+    except:
+        pass
 
 
-def load_cleaned_data_for_drl():
-    """
-    直接加载清洗后的 .npy 数据 (X.npy, y.npy)
-    """
-    print(f"🚀 [DRL] 正在加载清洗后的数据集: {DATA_DIR}")
-
+def load_data():
     x_path = os.path.join(DATA_DIR, "X.npy")
     y_path = os.path.join(DATA_DIR, "y.npy")
+    if not os.path.exists(x_path): raise Exception(f"Data not found in {DATA_DIR}")
 
-    if not os.path.exists(x_path) or not os.path.exists(y_path):
-        raise FileNotFoundError(f"❌ 找不到 X.npy 或 y.npy，请先运行 save_data.py！路径: {DATA_DIR}")
-
-    # 1. 加载数据
-    X = np.load(x_path).astype(np.float32)
-    y = np.load(y_path).astype(np.float32)
-
-    # 2. 检查数据
-    # 我们不需要背景(0)，也不需要太多的样本导致计算太慢
-    # save_data.py 生成的数据已经是纯净的材质数据了
-
-    print(f"✅ 数据加载成功: {X.shape}")
-    print(f"   材质标签分布: {np.unique(y, return_counts=True)}")
-
-    # 3. 采样 (如果数据量太大，比如 > 5万，DRL计算互信息会很慢，建议采样)
-    MAX_SAMPLES = 20000
-    if X.shape[0] > MAX_SAMPLES:
-        print(f"⚠️ 数据量过大 ({X.shape[0]}), 随机采样 {MAX_SAMPLES} 条用于特征选择...")
-        indices = np.random.choice(X.shape[0], MAX_SAMPLES, replace=False)
-        X = X[indices]
-        y = y[indices]
-
+    # 使用 mmap_mode='r' 可以避免一次性把 40万数据读入内存，节省内存
+    X = np.load(x_path, mmap_mode='r')
+    y = np.load(y_path)
     return X, y
 
 
+def prepare_balanced_drl_data(X_full, y_full, samples_per_class=2000):
+    """
+    [新增] 构造一个严格平衡的 (1:1) 小规模数据集用于 DRL 奖励计算
+    """
+    print(f"⚖️ 正在平衡数据集 (目标: 每类 {samples_per_class} 个)...")
+
+    # 1. 找出正负样本索引
+    idx_pos = np.where(y_full == 1)[0]
+    idx_neg = np.where(y_full == 0)[0]
+
+    print(f"   - 原始正样本数: {len(idx_pos)}")
+    print(f"   - 原始负样本数: {len(idx_neg)}")
+
+    # 2. 检查数据量是否足够
+    real_samples = min(len(idx_pos), len(idx_neg), samples_per_class)
+
+    # 3. 随机抽取 (无放回)
+    # 注意：因为 X 是 mmap，这里只操作索引
+    selected_pos = np.random.choice(idx_pos, real_samples, replace=False)
+    selected_neg = np.random.choice(idx_neg, real_samples, replace=False)
+
+    # 4. 合并索引
+    selected_indices = np.concatenate([selected_pos, selected_neg])
+
+    # 5. [关键] 必须打乱，否则前面全是1后面全是0
+    np.random.shuffle(selected_indices)
+
+    # 6. 真正加载数据到内存
+    # 只有这一步才会把数据读入 RAM
+    X_balanced = X_full[selected_indices].astype(np.float32)
+    y_balanced = y_full[selected_indices].astype(np.float32)
+
+    print(f"✅ 平衡完成: 总数 {len(y_balanced)}, 正负比 1:1")
+    return X_balanced, y_balanced
+
+
 def train_dqn():
-    # 1. 加载数据 (已清洗、已归一化)
-    X_full, y_full = load_cleaned_data_for_drl()
-
-    # ⚠️ 注意：因为 save_data.py 已经做了 Min-Max 归一化，
-    # 这里不需要再做 SNV 或其他归一化，保持和训练时一致即可。
-    # 如果你 save_data.py 没做归一化，这里才需要做。
-    # 假设你用的是我刚才给的 save_data.py (含 Min-Max)，这里直接用。
-
-    # 裁剪异常值 (Double check)
-    X_full = np.clip(X_full, 0, 1)
-
+    # 1. 加载全量数据 (Lazy Load)
+    X_full, y_full = load_data()
     num_total_bands = X_full.shape[1]
-    print(f"📊 总波段数: {num_total_bands}")
 
-    # 2. 计算指标
-    print("⚖️ 计算互信息 (Mutual Information)...")
-    # 这里的 y_full 包含 1(PET), 2(CC), 3(PA) 等
-    # 互信息会自动计算波段与这些类别的相关性
-    mi_scores = precompute_mutual_information(X_full, y_full)
+    # 2. [修改] 获取平衡的 DRL 专用数据集
+    X_drl, y_drl = prepare_balanced_drl_data(X_full, y_full, SAMPLES_PER_CLASS)
 
-    print("📉 计算熵 (Entropy)...")
-    entropies = precompute_entropies(X_full)
+    # 3. 再次划分为 k-NN 的 训练集 (Fit) 和 验证集 (Score)
+    # 这里不需要再 stratify，因为已经是 1:1 了，普通 shuffle split 即可
+    X_reward_train, X_reward_val, y_reward_train, y_reward_val = train_test_split(
+        X_drl, y_drl, test_size=0.4, random_state=42
+    )
 
-    # 归一化指标到 0-1
-    mi_scores = (mi_scores - np.min(mi_scores)) / (np.max(mi_scores) - np.min(mi_scores) + 1e-6)
-    entropies = (entropies - np.min(entropies)) / (np.max(entropies) - np.min(entropies) + 1e-6)
+    print(f"📊 DRL 奖励计算集 (用于 k-NN):")
+    print(f"   - Fit Set  : {X_reward_train.shape} (用于构建分类器)")
+    print(f"   - Val Set  : {X_reward_val.shape} (用于计算 OA)")
 
-    # 3. 训练 Agent
+    # 4. 初始化 Agent
     agent = BandSelectionAgent(num_total_bands)
-
-    print(f"\n🔥 开始筛选特征波段 (目标: {NUM_BANDS_TO_SELECT}个)...")
+    print(f"\n🔥 开始训练 D3QN-SBS (目标: {NUM_BANDS_TO_SELECT} 波段)...")
 
     best_reward = -float('inf')
     best_bands = []
 
     for e in range(TOTAL_EPISODES):
-        state = np.zeros(num_total_bands)
+        state = np.zeros(num_total_bands)  # 初始状态
         selected_bands = []
         episode_reward = 0
 
         for step in range(NUM_BANDS_TO_SELECT):
+            # 获取动作
             action = agent.get_action(state, selected_bands)
 
-            # 计算奖励
-            reward = calculate_reward(selected_bands, action, entropies, mi_scores, alpha=ALPHA)
+            # 计算奖励 (使用平衡数据集计算 OA)
+            reward = calculate_reward_supervised(
+                selected_bands, action,
+                X_reward_train, y_reward_train,
+                X_reward_val, y_reward_val
+            )
 
+            # 更新状态
             next_state = state.copy()
             next_state[action] = 1
+
             done = (len(selected_bands) == NUM_BANDS_TO_SELECT - 1)
 
             agent.remember(state, action, reward, next_state, done)
@@ -125,35 +127,33 @@ def train_dqn():
             episode_reward += reward
 
         agent.update_target_network()
+
         if agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent.epsilon_decay
 
+        # 记录最佳
         if episode_reward > best_reward:
             best_reward = episode_reward
             best_bands = sorted(selected_bands)
+            print(f"🌟 [New Best] Ep {e + 1} | Reward: {episode_reward:.4f} | Bands: {best_bands}")
 
         if (e + 1) % 10 == 0:
-            print(f"Episode {e + 1}/{TOTAL_EPISODES} | Reward: {episode_reward:.2f} | Epsilon: {agent.epsilon:.2f}")
+            print(f"Episode {e + 1}/{TOTAL_EPISODES} | Reward: {episode_reward:.4f} | Epsilon: {agent.epsilon:.2f}")
 
-    print(f"\n🏆 筛选完成。共筛选 {len(best_bands)} 个材质特征波段:\n{best_bands}")
+    print(f"\n🏆 最终筛选结果: {best_bands}")
     return best_bands
 
 
 if __name__ == "__main__":
     final_bands = train_dqn()
 
-    if not final_bands:
-        print("⚠️ 筛选失败，使用默认波段")
-        final_bands = list(range(30))
-
+    # 保存结果
     output_filename = "best_bands_config.json"
     save_data = {
-        "description": "Selected using Cleaned Normalized Data (X.npy)",
+        "description": "D3QN-SBS (k-NN Reward, Balanced Data)",
         "count": len(final_bands),
         "selected_bands": [int(b) for b in final_bands]
     }
-
     with open(output_filename, "w") as f:
         json.dump(save_data, f, indent=4)
-
-    print(f"💾 配置文件已更新: {os.path.abspath(output_filename)}")
+    print(f"💾 配置文件已保存: {output_filename}")
