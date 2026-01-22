@@ -2,6 +2,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers, callbacks
 from sklearn.model_selection import train_test_split
+import json
+import numpy as np
 from tensorflow.keras.callbacks import ModelCheckpoint
 import os
 import time
@@ -25,7 +27,7 @@ else:
 print(f"{'=' * 40}\n")
 
 # ================= 🔧 路径配置 =================
-DATA_DIR = r"E:\SPEDATA\NP_newdata"
+DATA_DIR = r"E:\SPEDATA\NP_new1.0.2"
 MODEL_SAVE_DIR = r"D:\DRL\DRL1\models"
 if not os.path.exists(MODEL_SAVE_DIR): os.makedirs(MODEL_SAVE_DIR)
 
@@ -96,26 +98,58 @@ def build_transformer_model(input_shape):
     return models.Model(inputs, outputs, name="PET_Transformer_Model")
 
 
-# ================= 4. 回调函数 =================
+# ================= 4. 智能保存回调函数 (修改版) =================
 class SmartModelCheckpoint(tf.keras.callbacks.Callback):
     def __init__(self, save_dir):
         super(SmartModelCheckpoint, self).__init__()
         self.save_dir = save_dir
-        self.best_acc = -float('inf')
+        # 记录上一次因精度提升而保存时的精度，初始化为0
+        self.last_milestone_acc = 0.0
 
     def on_epoch_end(self, epoch, logs=None):
         current_acc = logs.get('val_accuracy')
-        if current_acc is not None and current_acc > self.best_acc:
+        if current_acc is None:
+            return
+
+        should_save = False
+        save_reason = ""
+
+        # --- 策略 1: 每10轮保存一次 ---
+        if (epoch + 1) % 10 == 0:
+            should_save = True
+            save_reason = f"Epoch {epoch + 1}"
+
+        # --- 策略 2: 精度阶梯提升保存 ---
+        # 判定当前阶段的提升阈值
+        if self.last_milestone_acc >= 0.9:
+            # 精度达到0.9之后，每0.05保存一次
+            threshold = 0.05
+        else:
+            # 精度未到0.9，每0.1保存一次
+            threshold = 0.1
+
+        # 检查是否满足提升条件
+        if current_acc >= (self.last_milestone_acc + threshold):
+            should_save = True
+            # 更新里程碑基准（只有触发了精度保存才更新这个基准）
+            self.last_milestone_acc = current_acc
+            save_reason = f"Acc Improved (+{threshold})"
+
+        # --- 执行保存 ---
+        if should_save:
+            # 格式：保存时间-当前精度-models.h5
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-            filename = f"pet_transformer_{time_str}_acc_{current_acc:.4f}.h5"
+            # 保持文件名中精度的格式整洁，例如 0.9500
+            filename = f"{time_str}-{current_acc:.4f}-models.h5"
             save_path = os.path.join(self.save_dir, filename)
+
             self.model.save(save_path)
-            print(f"\n💾 [新纪录] 精度: {current_acc:.4f} -> 已保存: {filename}")
-            self.best_acc = current_acc
+            print(f"\n💾 [自动保存] 触发: {save_reason} | 当前精度: {current_acc:.4f} -> 已保存: {filename}")
 
 
 # ================= 5. 主流程 =================
 if __name__ == "__main__":
+    # 1. 加载全量数据
     print("🚀 正在加载新生成的二分类数据集 (X.npy, y.npy)...")
     x_path = os.path.join(DATA_DIR, "X.npy")
     y_path = os.path.join(DATA_DIR, "y.npy")
@@ -126,6 +160,23 @@ if __name__ == "__main__":
 
     X = np.load(x_path).astype(np.float32)
     y = np.load(y_path).astype(np.float32)
+
+    # 2. 加载波段配置文件
+    config_path = "best_bands_config.json"  # 确保此文件存在
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"❌ 找不到波段配置文件: {config_path}，请先运行 main.py")
+
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+        selected_bands = config["selected_bands"]
+
+    print(f"🤖 [Auto] 已加载 {len(selected_bands)} 个特征波段配置。")
+    print(f"   -> 原始维度: {X.shape}")
+
+    # 3. 执行特征切片 (Slicing)
+    # 只保留选中的波段，抛弃其他波段
+    X = X[:, selected_bands]
+    print(f"   -> 切片后维度: {X.shape} (用于训练)")
 
     print(f"📊 数据加载完毕: {X.shape}")
     print(f"   正样本(PET): {np.sum(y == 1)} | 负样本(BG/CC/PA): {np.sum(y == 0)}")
