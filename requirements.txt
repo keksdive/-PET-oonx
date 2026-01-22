@@ -1,0 +1,33 @@
+# Requirements for -PET-oonx project
+# Tested/known-good ranges are suggestions; adjust to your environment (GPU vs CPU TensorFlow) as needed.
+
+numpy>=1.23.0,<2.0.0
+matplotlib>=3.5.0
+spectral>=0.23.0          # for spectral.io.envi to read .spe/.hdr
+
+# TensorFlow for training & inference (choose GPU build if you have CUDA configured)
+# - For machines with NVIDIA GPU and CUDA installed, install the matching `tensorflow` (or `tensorflow-gpu` for older versions)
+# - The project uses Keras APIs and tf2onnx for exporting to ONNX
+tensorflow>=2.9.0,<2.14.0
+h5py>=3.1.0               # for loading/saving .h5 model weights
+
+# ONNX tooling (optional but recommended if you export/use ONNX models)
+tf2onnx>=1.13.0
+onnx>=1.12.0
+onnxruntime>=1.15.0       # CPU runtime; install onnxruntime-gpu if using GPU execution providers
+
+# Utilities commonly used by the codebase
+scikit-learn>=1.0.0
+tqdm>=4.60.0
+pillow>=9.0.0
+
+# Optional (only if you add extra image processing / I/O)
+opencv-python>=4.6.0
+
+# Notes:
+# - If you are on Windows and want GPU TensorFlow, follow TensorFlow's official install guide to match CUDA/cuDNN versions.
+# - To install quickly in a venv:
+#     python -m venv .venv
+#     .\.venv\Scripts\Activate.ps1    # PowerShell on Windows
+#     pip install -U pip
+#     pip install -r requirements.txt

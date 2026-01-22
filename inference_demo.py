@@ -21,14 +21,14 @@ INFERENCE_BATCH_SIZE = 8192
 
 # ================= 📁 路径配置 =================
 # [1] 模型权重路径
-MODEL_PATH = r"D:\HSP_models\MODELS\classic_20260120-2319_acc_0.9994.h5"
+MODEL_PATH = r"D:\DRL\DRL1\models\classic_20260121-1356_acc_0.9234.h5"
 
 # [2] 自动加载波段配置 (关键修改)
 # 确保这个 json 文件在你的项目目录下，或者改成绝对路径
 CONFIG_PATH = "best_bands_config.json"
 
 # [3] 输入输出路径
-INPUT_DIR = r"E:\SPEDATA\高谱相机数据集\测试集\PET"
+INPUT_DIR = r"E:\SPEDATA\高谱相机数据集\VAL-noPET"
 OUTPUT_DIR = r"D:\RESULT\1.22TEST.1.1"
 
 # [4] 校准文件
@@ -40,7 +40,7 @@ BRIGHTNESS_THRESHOLD = 0.01
 TARGET_PET_LABEL = 0
 SAVE_VISUALIZATION = True
 # 2. [新增] 提高置信度阈值 (过滤模棱两可的塑料)
-CONFIDENCE_THRESHOLD = 0.50  # 只有概率 > 85% 才认为是 PET
+CONFIDENCE_THRESHOLD = 0.4  # 只有概率 > 85% 才认为是 PET
 
 
 # ================= 🔧 自动加载波段逻辑 =================
