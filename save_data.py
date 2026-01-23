@@ -10,37 +10,38 @@ import random
 DATASETS = [
     # 1. PET 文件夹 (正样本)
     {
-        "spe_dir": r"E:\SPEDATA\高谱相机数据集\训练集\置信度大于90%PET",
+        "spe_dir": r"D:\Train_Data\fake_img\train-PET",
+        "json_dir": r"D:\Train_Data\fake_img\train-PET\fake_images"
+    },
+    # 2. 非 PET 文件夹 (CC) -> 将作为负样本 (背景/容易区分)
+    {
+        "spe_dir": r"D:\Train_Data\no_PET\CC",
         "json_dir": None
     },
-    # 2. 非 PET 文件夹 (CC) -> 将作为负样本
+    # 3. 非 PET 文件夹 (PA) -> 将作为困难负样本 (需重点加权)
     {
-        "spe_dir": r"E:\SPEDATA\高谱相机数据集\训练集\no_PET\CC",
-        "json_dir": None
-    },
-    # 3. 非 PET 文件夹 (PA) -> 将作为负样本
-    {
-        "spe_dir": r"E:\SPEDATA\高谱相机数据集\训练集\no_PET\PA",
+        "spe_dir": r"D:\Train_Data\no_PET\PA",
         "json_dir": None
     }
 ]
 
-# [新增] 校准文件路径 (请确认路径是否正确)
-WHITE_REF_PATH = r"E:\SPEDATA\高谱相机数据集\DWA\white_ref.spe"
-DARK_REF_PATH = r"E:\SPEDATA\高谱相机数据集\DWA\dark_ref.spe"
+# [新增] 校准文件路径
+WHITE_REF_PATH = r"D:\Train_Data\DWA\white_ref.spe"
+DARK_REF_PATH = r"D:\Train_Data\DWA\dark_ref.spe"
 
 # 输出保存路径
-OUTPUT_DIR = r"E:\SPEDATA\NP_new1.0.2"
+OUTPUT_DIR = r"D:\Processed_Result\67w-38w\procession-data"
 
-# 标签定义：二分类逻辑
+# 标签定义：三分类逻辑 (支持困难样本挖掘)
 LABEL_MAP = {
-    "PET": 1,
-    "NON_PET": 0
+    "PET": 1,       # 正样本
+    "NON_PET": 0,   # 普通负样本 (背景, CC, PP等)
+    "PA": 2         # 困难负样本 (尼龙) -> 对应 Class Weight 高权重
 }
 
 # 采样参数
-SAMPLES_PER_IMAGE = 3000
-THRESHOLD_RATIO = 0.15
+SAMPLES_PER_IMAGE = 4000
+THRESHOLD_RATIO = 0.05
 TARGET_BANDS = 208  # 强制对齐波段数
 
 
@@ -61,10 +62,7 @@ def repair_hdr_file(hdr_path):
 
 
 def load_calibration_data(white_path, dark_path):
-    """
-    [新增] 加载黑白校准文件并计算平均光谱
-    返回: (white_mean, dark_mean) 维度为 (Bands,)
-    """
+    """加载黑白校准文件并计算平均光谱"""
     print(f"⚪ 加载白板: {white_path}")
     print(f"⚫ 加载黑板: {dark_path}")
 
@@ -74,7 +72,6 @@ def load_calibration_data(white_path, dark_path):
         if not os.path.exists(path) or not os.path.exists(hdr):
             raise FileNotFoundError(f"缺失校准文件: {path}")
         img = envi.open(hdr, path).load()
-        # 计算空间维度的平均值，得到纯光谱向量
         return np.mean(img, axis=(0, 1)).astype(np.float32)
 
     try:
@@ -87,10 +84,7 @@ def load_calibration_data(white_path, dark_path):
 
 
 def load_envi_image_with_calibration(hdr_path, white_ref, dark_ref):
-    """
-    [修改] 加载 ENVI 图像并立即执行黑白校正
-    Reflectance = (Raw - Dark) / (White - Dark)
-    """
+    """加载 ENVI 图像并立即执行黑白校正"""
     try:
         repair_hdr_file(hdr_path)
         base = os.path.splitext(hdr_path)[0]
@@ -98,37 +92,29 @@ def load_envi_image_with_calibration(hdr_path, white_ref, dark_ref):
         if not os.path.exists(spe_path): spe_path = base + ".raw"
         if not os.path.exists(spe_path): return None
 
-        # 1. 加载原始 RAW 数据 (DN值)
+        # 1. 加载原始 RAW 数据
         img_obj = envi.open(hdr_path, spe_path)
         raw_data = np.array(img_obj.load(), dtype=np.float32)
 
-        # 2. 维度修正 (确保是 H, W, B)
+        # 2. 维度修正
         shape = raw_data.shape
         if shape[1] < shape[2] and shape[1] in [206, 208, 224]:
             raw_data = np.transpose(raw_data, (0, 2, 1))
 
         H, W, B = raw_data.shape
 
-        # 3. [核心] 执行黑白校正 (反射率计算)
-        # 自动适配校准文件的波段数 (防止因 208 vs 224 导致的 crash)
+        # 3. 黑白校正
         if white_ref.shape[0] != B:
-            # 如果波段不匹配，简单线性插值校准数据到图像的波段数
-            # 注意：这是为了防止报错的兜底策略，理想情况下应一致
             w_res = cv2.resize(white_ref.reshape(1, -1), (B, 1)).flatten()
             d_res = cv2.resize(dark_ref.reshape(1, -1), (B, 1)).flatten()
         else:
             w_res, d_res = white_ref, dark_ref
 
         denom = w_res - d_res
-        denom[denom == 0] = 1e-6  # 防止除零
-
-        # 利用广播机制计算反射率
+        denom[denom == 0] = 1e-6
         reflectance = (raw_data - d_res) / denom
 
-        # 裁剪异常值 (0~1 之外的通常是噪声)
-        # reflectance = np.clip(reflectance, 0, 1.5) # 可选，暂不强制 clip，保留高光特征
-
-        # 4. 波段对齐 (Resize 到 TARGET_BANDS)
+        # 4. 波段对齐
         if TARGET_BANDS is not None and B != TARGET_BANDS:
             flat = reflectance.reshape(-1, B)
             flat_resized = cv2.resize(flat, (TARGET_BANDS, H * W), interpolation=cv2.INTER_LINEAR)
@@ -157,33 +143,102 @@ def get_mask_from_json(json_path, image_shape):
 
 
 def get_mask_from_threshold(img_data):
-    """计算强度并进行严格阈值过滤 (基于反射率)"""
+    """计算强度并进行阈值过滤"""
     intensity = np.mean(img_data, axis=2)
-    # 注意：反射率通常在 0~1 之间，所以阈值逻辑依然适用
-    # 但如果反光很强可能 >1，取 max * ratio 依然是稳健的
     limit = np.max(intensity) * THRESHOLD_RATIO
     return intensity > limit
 
 
-def min_max_normalize(pixels):
+from scipy.signal import savgol_filter
+
+
+def preprocess_spectra(pixels, use_snv=True, use_savgol=True, use_derivative=False):
     """
-    Min-Max 归一化 (针对像素级)
-    虽然已经是反射率了，但为了输入神经网络，再次归一化到 0-1 也是常见的做法
+    综合预处理管道
+    pixels: (N, Bands)
     """
-    p_min = pixels.min(axis=1, keepdims=True)
-    p_max = pixels.max(axis=1, keepdims=True)
-    range_val = p_max - p_min
-    range_val[range_val == 0] = 1e-6
-    return (pixels - p_min) / range_val
+    data = pixels.copy()
+
+    # 1. Savitzky-Golay 平滑 (去噪)
+    if use_savgol:
+        # window_length 需根据波段间隔调整，通常 5-11 之间
+        data = savgol_filter(data, window_length=9, polyorder=2, axis=1)
+
+    # 2. 一阶导数 (可选，突出特征)
+    if use_derivative:
+        data = np.gradient(data, axis=1)
+
+    # 3. 归一化 (SNV 优于 MinMax)
+    if use_snv:
+        mean = np.mean(data, axis=1, keepdims=True)
+        std = np.std(data, axis=1, keepdims=True)
+        std[std == 0] = 1e-6
+        data = (data - mean) / std
+    else:
+        # 如果仍坚持用 MinMax，建议先平滑再 MinMax
+        p_min = data.min(axis=1, keepdims=True)
+        p_max = data.max(axis=1, keepdims=True)
+        rng = p_max - p_min
+        rng[rng == 0] = 1e-6
+        data = (data - p_min) / rng
+
+    return data.astype(np.float32)
+
+
+def filter_outliers(pixels, labels, purity_threshold=0.90):
+    """
+    基于光谱角的离群点剔除 (简单版)
+    """
+    clean_pixels = []
+    clean_labels = []
+
+    unique_labels = np.unique(labels)
+    for lbl in unique_labels:
+        idx = np.where(labels == lbl)[0]
+        cls_pixels = pixels[idx]
+
+        # 计算该类平均光谱 (Centroid)
+        centroid = np.mean(cls_pixels, axis=0)
+        norm_centroid = np.linalg.norm(centroid)
+
+        # 计算余弦相似度 (Cosine Similarity)
+        # A . B / (|A| * |B|)
+        norms = np.linalg.norm(cls_pixels, axis=1)
+        dots = np.dot(cls_pixels, centroid)
+        sims = dots / (norms * norm_centroid + 1e-6)
+
+        # 保留相似度高的纯净像素
+        mask = sims >= purity_threshold
+        clean_pixels.append(cls_pixels[mask])
+        clean_labels.append(labels[idx][mask])
+
+        print(f"   🧹 Class {lbl}: 剔除 {len(idx) - np.sum(mask)} 个离群杂质像素")
+
+    return np.vstack(clean_pixels), np.concatenate(clean_labels)
+
 
 
 def determine_label(path_string):
+    """
+    [修改] 核心标签判断逻辑
+    PET -> 1
+    PA (尼龙) -> 2 (独立类别)
+    其他非PET -> 0
+    """
     path_upper = path_string.upper()
 
+    # 1. 优先判断 PET
     if "PET" in path_upper and "NO_PET" not in path_upper and "NO-PET" not in path_upper:
         return LABEL_MAP["PET"], "PET"
 
-    negative_keys = ["CC", "PA", "PP", "醋酸", "OTHER", "NO_PET", "NO-PET"]
+    # 2. [新增] 专门判断 PA (尼龙)
+    # 只要路径或文件名中包含 PA，就归为类别 2
+    if "PA" in path_upper:
+        return LABEL_MAP["PA"], "PA"
+
+    # 3. 其他负样本判断
+    # 注意：PA 已经从这个列表中移除，或者上面的 if "PA" 会先拦截
+    negative_keys = ["CC", "PP", "醋酸", "OTHER", "NO_PET", "NO-PET"]
     for key in negative_keys:
         if key in path_upper:
             return LABEL_MAP["NON_PET"], "NON_PET"
@@ -194,15 +249,15 @@ def determine_label(path_string):
 def process_and_save_data():
     if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR)
 
-    # 1. [新增] 预加载校准数据
     print("📥 正在加载黑白校准文件...")
     white_ref, dark_ref = load_calibration_data(WHITE_REF_PATH, DARK_REF_PATH)
 
     all_pixels, all_labels = [], []
-    stats = {0: 0, 1: 0}
+    # [修改] 增加类别 2 的统计槽位
+    stats = {0: 0, 1: 0, 2: 0}
     total_files = 0
 
-    print(f"🚀 [专家模式] 开始处理数据 (已启用黑白辐射校正)")
+    print(f"🚀 [专家模式] 开始处理数据 (已启用 PA 独立分类)")
     print(f"📂 正在扫描 {len(DATASETS)} 个数据源...")
 
     for ds_config in DATASETS:
@@ -219,11 +274,10 @@ def process_and_save_data():
 
             if label_id is None: continue
 
-            # [修改] 调用带校正的加载函数
             img_data = load_envi_image_with_calibration(hdr_path, white_ref, dark_ref)
             if img_data is None: continue
 
-            # 1. 获取有效区域掩膜
+            # 获取掩膜
             fg_mask = None
             mode = "Threshold"
 
@@ -241,7 +295,6 @@ def process_and_save_data():
                 fg_mask = get_mask_from_threshold(img_data)
                 mode = "Auto-Threshold"
 
-            # 2. 提取像素
             valid_pixels = img_data[fg_mask]
 
             if len(valid_pixels) > 0:
@@ -249,10 +302,8 @@ def process_and_save_data():
                     indices = np.random.choice(len(valid_pixels), SAMPLES_PER_IMAGE, replace=False)
                     valid_pixels = valid_pixels[indices]
 
-                # 3. 归一化 (反射率已经是物理量，但为了神经网络稳定性，再次归一化)
                 norm_pixels = min_max_normalize(valid_pixels)
 
-                # 4. 保存
                 all_pixels.append(norm_pixels)
                 all_labels.append(np.full(len(norm_pixels), label_id, dtype=np.int32))
                 stats[label_id] += len(norm_pixels)
@@ -270,19 +321,14 @@ def process_and_save_data():
     X = np.vstack(all_pixels)
     y = np.concatenate(all_labels)
 
-    # 打乱数据
     perm = np.random.permutation(len(y))
     X, y = X[perm], y[perm]
 
     print("-" * 30)
     print(f"✅ 完成! 总文件: {total_files}")
-    print(f"📊 正样本 (PET, Label 1): {stats[1]}")
-    print(f"📊 负样本 (CC/PA/杂波, Label 0): {stats[0]}")
-
-    # 检查数值范围
-    print(f"📉 数据范围: Min={X.min():.4f}, Max={X.max():.4f}")
-    if X.max() > 1.0 or X.min() < 0.0:
-        print("⚠️ 警告: 数据范围超出 0-1，可能 Min-Max 归一化有误或原始反射率异常高")
+    print(f"📊 正样本   (PET, Label 1): {stats[1]}")
+    print(f"📊 普通负样 (CC/Label 0):   {stats[0]}")
+    print(f"📊 困难负样 (PA/Label 2):   {stats[2]} <--- 确认这里有数据!")
 
     np.save(os.path.join(OUTPUT_DIR, "X.npy"), X)
     np.save(os.path.join(OUTPUT_DIR, "y.npy"), y)
