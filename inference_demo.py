@@ -10,22 +10,22 @@ import cv2
 
 # ================= 🔧 配置区域 =================
 # [1] 模型路径 (支持 .h5 或 .onnx)
-MODEL_PATH = r"J:\asset\MODELS1.0.1\final_transformer_model.h5"
+MODEL_PATH = r"J:\asset\MODELS\MODELS\20260122-2128-0.9337-models.h5"
 #MODEL_PATH = r"J:\asset\MODELS1.0.1\pet_transformer.onnx"  # 也可以切换为 ONNX
 
 # [2] 配置文件
 CONFIG_PATH = "best_bands_config.json"
 
 # [3] 路径
-INPUT_DIR = r"E:\SPEDATA\高谱相机数据集\VAL-PET"
-OUTPUT_DIR = r"D:\RESULT\1.22test1.2\testpet-0.01-0.50"
+INPUT_DIR = r"E:\SPEDATA\高谱相机数据集\VAL-noPET"
+OUTPUT_DIR = r"D:\RESULT\1.23test1.2"
 
 # [4] 校准文件
 WHITE_REF = r"E:\SPEDATA\高谱相机数据集\DWA\white_ref.spe"
 DARK_REF = r"E:\SPEDATA\高谱相机数据集\DWA\dark_ref.spe"
 
 # [5] 参数
-BRIGHTNESS_THRESHOLD = 0.01
+BRIGHTNESS_THRESHOLD = 0.008
 CONFIDENCE_THRESHOLD = 0.50
 INFERENCE_BATCH_SIZE = 1024
 SAVE_VISUALIZATION = True # 是否保存可视化结果图 (True=保存, False=不保存)

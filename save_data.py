@@ -10,8 +10,8 @@ import random
 DATASETS = [
     # 1. PET 文件夹 (正样本)
     {
-        "spe_dir": r"E:\SPEDATA\高谱相机数据集\训练集\置信度大于90%PET",
-        "json_dir": None
+        "spe_dir": r"E:\SPEDATA\高谱相机数据集\train_data_fake\train-PET",
+        "json_dir": "E:\SPEDATA\高谱相机数据集\train_data_fake\train-PET\fake_images"
     },
     # 2. 非 PET 文件夹 (CC) -> 将作为负样本
     {

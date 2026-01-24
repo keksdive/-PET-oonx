@@ -12,7 +12,7 @@ class BandSelectionAgent:
         self.gamma = 0.99  # 折扣因子
         self.batch_size = 64  # 稍微减小 Batch Size 以适应波段选择的稀疏性
         self.epsilon = 1.0  # 初始探索率
-        self.epsilon_min = 0.01  # 最小探索率
+        self.epsilon_min = 0.001  # 最小探索率
         self.epsilon_decay = 0.995  # 衰减率
 
         # 经验回放池
