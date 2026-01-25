@@ -25,10 +25,12 @@ WHITE_REF = r"E:\SPEDATA\高谱相机数据集\DWA\white_ref.spe"
 DARK_REF = r"E:\SPEDATA\高谱相机数据集\DWA\dark_ref.spe"
 
 # [5] 参数
-BRIGHTNESS_THRESHOLD = 0.008
-CONFIDENCE_THRESHOLD = 0.50
+
+BRIGHTNESS_THRESHOLD = 0.02 # 亮度下限 (过滤背景)
+MAX_BRIGHTNESS_THRESHOLD = 0.99  # [新增] 亮度上限 (过滤高光/过曝/金属反光)，反射率通常<1.0
+CONFIDENCE_THRESHOLD = 0.75
 INFERENCE_BATCH_SIZE = 1024
-SAVE_VISUALIZATION = True # 是否保存可视化结果图 (True=保存, False=不保存)
+SAVE_VISUALIZATION = True
 
 
 # ================= 🧠 模型包装类 (兼容 H5/ONNX) =================
@@ -178,24 +180,28 @@ def process_single_image(input_path, engine, white_sel, dark_sel, selected_bands
 
     # 维度修正
     if raw_img.shape[1] > 200 and raw_img.shape[1] < 230 and raw_img.shape[2] != raw_img.shape[1]:
-        # 简单判断波段维度是否在第二个位置
         raw_img = np.transpose(raw_img, (0, 2, 1))
 
     H, W, TotalBands = raw_img.shape
 
-    # 2. 安全提取特征波段 (Raw DN)
+    # 2. 安全提取特征波段
     raw_sel, _ = safe_extract_bands(raw_img, selected_bands)
     raw_sel = raw_sel.astype(np.float32)
 
-    # 3. 辐射校准 (只计算这30个波段)
+    # 3. 辐射校准
     diff = (white_sel - dark_sel)
     diff[diff == 0] = 1e-6
     reflectance = (raw_sel - dark_sel) / diff
 
-    # 4. 亮度 Mask (基于30个波段的平均亮度)
+    # 4. [修改] 双向亮度 Mask
     mean_intensity = np.mean(reflectance, axis=2)
-    dynamic_thresh = max(BRIGHTNESS_THRESHOLD, np.max(mean_intensity) * 0.1)
-    valid_mask = mean_intensity > dynamic_thresh
+
+    # 动态下限 (保留 Demo 原有的自适应背景过滤)
+    dynamic_min = max(BRIGHTNESS_THRESHOLD, np.max(mean_intensity) * 0.1)
+
+    # 逻辑：(大于下限) AND (小于上限)
+    # MAX_BRIGHTNESS_THRESHOLD 建议设为 0.8 - 1.2 之间
+    valid_mask = (mean_intensity > dynamic_min) & (mean_intensity < MAX_BRIGHTNESS_THRESHOLD)
 
     final_map = np.zeros((H, W), dtype=np.float32)
     inf_time = 0
@@ -203,7 +209,7 @@ def process_single_image(input_path, engine, white_sel, dark_sel, selected_bands
     if np.sum(valid_mask) > 0:
         valid_pixels = reflectance[valid_mask]
 
-        # 5. Min-Max 归一化 (Pixel-wise)
+        # 5. Min-Max 归一化
         p_min = np.min(valid_pixels, axis=1, keepdims=True)
         p_max = np.max(valid_pixels, axis=1, keepdims=True)
         denom = p_max - p_min
@@ -211,27 +217,25 @@ def process_single_image(input_path, engine, white_sel, dark_sel, selected_bands
 
         model_input = (valid_pixels - p_min) / denom
 
-        # 6. AI 推理 (兼容 ONNX/Keras)
+        # 6. AI 推理
         t0 = time.time()
         preds = engine.predict(model_input)
         inf_time = time.time() - t0
 
-        # 7. 结果过滤
-        prob_pet = preds  # 假设输出是 PET 概率 (Sigmoid)
-        # 如果训练标签是反的 (0=PET)，这里需要 1-preds
-        # 根据 save_data.py, PET=1, 所以直接用 preds
+        # 7. 结果过滤 (硬阈值二值化)
+        prob_pet = preds  # 假设模型直接输出 PET 概率
 
+        # 将结果二值化：>阈值=1.0, <阈值=0.0
         final_decision = np.where(prob_pet > CONFIDENCE_THRESHOLD, 1.0, 0.0)
+
         final_map[valid_mask] = final_decision.flatten()
 
     return {
         'map': final_map,
-        'raw': raw_img,  # 返回原图用于可视化
+        'raw': raw_img,
         'inf_time': inf_time,
         'total_time': time.time() - t_start
     }, None
-
-
 # ================= 主程序 =================
 if __name__ == "__main__":
     #---> 在这里调用配置函数，必须在任何模型加载之前！ < ---
