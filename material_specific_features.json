@@ -1,0 +1,229 @@
+{
+    "pipeline_info": {
+        "description": "Physics-Augmented DRL Selection",
+        "timestamp": "2026-01-25 21:08:58",
+        "input_dim": 416
+    },
+    "materials": {
+        "PET": {
+            "selected_bands": [
+                70,
+                71,
+                72,
+                73,
+                74,
+                75,
+                76,
+                77,
+                78,
+                79,
+                80,
+                123,
+                124,
+                125,
+                126,
+                127,
+                128,
+                129,
+                196,
+                203,
+                206,
+                280,
+                283,
+                286,
+                287,
+                333,
+                334,
+                336,
+                400,
+                412
+            ],
+            "physics_metadata": {
+                "features_defined": 3,
+                "exclusion_rules": []
+            },
+            "band_analysis": [
+                {
+                    "index": 70,
+                    "type": "Intensity",
+                    "nm_approx": 1100,
+                    "physical_match": "Hit 1129nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 71,
+                    "type": "Intensity",
+                    "nm_approx": 1110,
+                    "physical_match": "Hit 1129nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 72,
+                    "type": "Intensity",
+                    "nm_approx": 1120,
+                    "physical_match": "Hit 1129nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Aligned (Int+Deriv Selected)"
+                },
+                {
+                    "index": 73,
+                    "type": "Intensity",
+                    "nm_approx": 1130,
+                    "physical_match": "Hit 1129nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 74,
+                    "type": "Intensity",
+                    "nm_approx": 1140,
+                    "physical_match": "Hit 1129nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 75,
+                    "type": "Intensity",
+                    "nm_approx": 1150,
+                    "physical_match": "Hit 1129nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Aligned (Int+Deriv Selected)"
+                },
+                {
+                    "index": 76,
+                    "type": "Intensity",
+                    "nm_approx": 1160,
+                    "physical_match": "Hit 1129nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 77,
+                    "type": "Intensity",
+                    "nm_approx": 1170,
+                    "physical_match": "Hit 1170nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 78,
+                    "type": "Intensity",
+                    "nm_approx": 1180,
+                    "physical_match": "Hit 1170nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Aligned (Int+Deriv Selected)"
+                },
+                {
+                    "index": 79,
+                    "type": "Intensity",
+                    "nm_approx": 1190,
+                    "physical_match": "Hit 1170nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Aligned (Int+Deriv Selected)"
+                },
+                {
+                    "index": 80,
+                    "type": "Intensity",
+                    "nm_approx": 1200,
+                    "physical_match": "Hit 1170nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "LocalMin",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 123,
+                    "type": "Intensity",
+                    "nm_approx": 1630,
+                    "physical_match": "Hit 1660nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "ZeroCrossing_NegPos",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 124,
+                    "type": "Intensity",
+                    "nm_approx": 1640,
+                    "physical_match": "Hit 1660nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "ZeroCrossing_NegPos",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 125,
+                    "type": "Intensity",
+                    "nm_approx": 1650,
+                    "physical_match": "Hit 1660nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "ZeroCrossing_NegPos",
+                    "alignment_status": "Aligned (Int+Deriv Selected)"
+                },
+                {
+                    "index": 126,
+                    "type": "Intensity",
+                    "nm_approx": 1660,
+                    "physical_match": "Hit 1660nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "ZeroCrossing_NegPos",
+                    "alignment_status": "Aligned (Int+Deriv Selected)"
+                },
+                {
+                    "index": 127,
+                    "type": "Intensity",
+                    "nm_approx": 1670,
+                    "physical_match": "Hit 1660nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "ZeroCrossing_NegPos",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 128,
+                    "type": "Intensity",
+                    "nm_approx": 1680,
+                    "physical_match": "Hit 1660nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "ZeroCrossing_NegPos",
+                    "alignment_status": "Aligned (Int+Deriv Selected)"
+                },
+                {
+                    "index": 129,
+                    "type": "Intensity",
+                    "nm_approx": 1690,
+                    "physical_match": "Hit 1660nm Feature",
+                    "topology_expect": "Valley",
+                    "derivative_expect": "ZeroCrossing_NegPos",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 196,
+                    "type": "Intensity",
+                    "nm_approx": 2360,
+                    "physical_match": "None",
+                    "topology_expect": "Unknown",
+                    "derivative_expect": "Unknown",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 203,
+                    "type": "Intensity",
+                    "nm_approx": 2430,
+                    "physical_match": "None",
+                    "topology_expect": "Unknown",
+                    "derivative_expect": "Unknown",
+                    "alignment_status": "Single"
+                },
+                {
+                    "index": 206,
+                    "type": "Intensity",
+                    "nm_approx": 
