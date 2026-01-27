@@ -1,0 +1,81 @@
+{
+    "description": "Hybrid Selection (MI + Expert Soft Guidance)",
+    "timestamp": "2026-01-25 17:57:20",
+    "learning_rate": 1e-05,
+    "selected_bands": [
+        80,
+        91,
+        103,
+        127,
+        131,
+        132,
+        148,
+        164,
+        188,
+        189,
+        190,
+        191,
+        193,
+        195,
+        201,
+        211,
+        241,
+        250,
+        291,
+        301,
+        329,
+        332,
+        341,
+        357,
+        371,
+        379,
+        393,
+        395,
+        405,
+        412
+    ],
+    "expert_config": {
+        "PET": {
+            "description": "Polyethylene terephthalate",
+            "features_nm": [
+                1660,
+                1129,
+                1170
+            ],
+            "indices_approx": [
+                126,
+                73,
+                77
+            ],
+            "color": "red"
+        },
+        "PA": {
+            "description": "Polyamide (Nylon)",
+            "features_nm": [
+                1520
+            ],
+            "indices_approx": [
+                112
+            ],
+            "color": "green"
+        },
+        "PC": {
+            "description": "Polycarbonate",
+            "features_nm": [
+                1685,
+                1195
+            ],
+            "indices_approx": [
+                129,
+                80
+            ],
+            "color": "blue"
+        },
+        "CC": {
+            "description": "Calcium Carbonate (Flat High Reflection)",
+            "features_nm": [],
+            "indices_approx": [],
+            "color": "orange"
+        }
+    }
+}
