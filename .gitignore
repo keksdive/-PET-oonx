@@ -1,0 +1,18 @@
+.vs/
+__pycache__/
+data/
+models/
+checkpoints/
+HSI_PET_Sorter/assets/calibration/
+*.spe
+*.onnx
+*.h5
+*.ipch
+# 忽略标定数据和大文件
+
+.vs/
+__pycache__/
+*.spe
+*.hdr
+*.onnx
+*.ipch
